@@ -44,3 +44,16 @@ Herramienta: Claude Code (Anthropic). Modelo en el Sprint 2: Claude Fable.
 - **Solución:**
   - Sección "Arquitectura" del README con un diagrama Mermaid (GitHub lo pinta) y el camino de una petición en cinco pasos: login, cada petición con `VerifyToken`, `RequireRole` y Joi, la renovación con el refresh token, el chat por socket.io con el token en el handshake y las tareas del servidor.
   - Sección "Detrás del proxy de la UPC" con las tres variables que cambian y por qué.
+
+### 4. Segundo despliegue: Studate en ea3 detrás del proxy de la UPC (`feat/cierre`)
+
+- **Pregunta:** cómo desplegar la versión final del sprint en el servidor de la asignatura y probarla de punta a punta, y qué dejar documentado para que cualquiera del equipo lo repita.
+- **Prompt:** «Ya toca el segundo despliegue y el cierre (bloque 9 del plan, de la 49 a la 54). Subimos la última versión al servidor y la probamos de punta a punta, en la web y en el móvil. [...] Dime el plan de acción.» Después: «Mejor lo haces tú [...] y en el README tiene que estar bien documentado cómo se despliega desde una primera vez [...]. Y quiero un HTML de cómo desplegar, para explicárselo al equipo.»
+- **Incoherencias:**
+  - No se sabía a qué puerto reenviaba el proxy de la UPC: se desplegó en el 80 y `https://ea3.upc.edu` respondió a la primera, así que era ese.
+  - Para la primera prueba la cookie `Secure` habría impedido entrar por la IP (http): se arrancó con `COOKIE_SECURE=false` y los dos orígenes, y al confirmar el proxy se pasó a `true` solo con `https://ea3.upc.edu`.
+  - Al recrear la API con el `.env` nuevo, nginx siguió apuntando a la IP vieja del contenedor (502 en `/api`): `restart web` lo arregló al momento y el frontend lleva ahora un `resolver` con el DNS de Docker para que no vuelva a pasar.
+  - El proxy no deja pasar WebSocket (400 en la subida): socket.io se queda en polling y el chat funciona igual.
+- **Solución:**
+  - Despliegue por SSH con la clave: usuario en el grupo `docker`, clon de `main`, `.env` con secretos generados en el propio servidor, `pull` y `up -d`; comprobaciones desde dentro, por la IP y por el proxy, incluido el 27017 cerrado.
+  - README con el estado del despliegue y las dos lecciones; guía en HTML para el equipo en la carpeta de documentos del grupo.
