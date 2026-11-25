@@ -94,6 +94,27 @@ La app del móvil apunta a `https://ea3.upc.edu/api`. Una vez dentro, el resto d
 `ea3-back.upc.edu`) al mismo puerto, todos sirven la misma web: la API responde en `/api` y el backoffice
 en `/admin` en cualquiera de ellos.
 
+### Estado: desplegado en ea3 (25-11-2026)
+
+Studate está en marcha en `https://ea3.upc.edu`. El proxy de la UPC reenvía al puerto **80** de la máquina
+`ea3` (`10.4.120.118` con la VPN; usuario `ea`), donde este repo está clonado en `/home/ea/STUDATE---DOCKER`
+en la rama `main`, con su `.env` (`WEB_PORT=80`, `CORS_ORIGINS=https://ea3.upc.edu`, `COOKIE_SECURE=true`,
+`IMAGE_TAG=latest` y dos secretos generados con `openssl rand -hex 32`, que solo existen en ese fichero).
+Comprobado desde fuera: login, la sesión se mantiene al recargar por https, el chat, el backoffice, y el
+27017 cerrado. Para actualizar: `docker compose pull && docker compose up -d`.
+
+Dos cosas que salieron en ese primer despliegue:
+
+- **El proxy no deja pasar WebSocket**: responde 400 a la subida de protocolo, así que socket.io se queda en
+  HTTP long-polling. El chat funciona igual (los mensajes llegan en menos de un segundo); solo cambia que
+  hay una petición cada pocos segundos en vez de una conexión abierta, y en la consola del navegador sale
+  un aviso por el intento de subida. Por la IP con la VPN sí va por WebSocket.
+- **nginx se quedaba con la IP vieja de la API**: al cambiar el `.env` y hacer `up -d`, Compose recreó la
+  API con otra IP interna y nginx, que había resuelto `api` al arrancar, daba 502 en `/api`. El arreglo
+  inmediato fue `docker compose restart web`; el definitivo está en la imagen de la web (nginx resuelve
+  `api` con el DNS de Docker cada 10 s). Con una imagen anterior a ese cambio, tras recrear la API hay que
+  reiniciar la web.
+
 ## Cómo arrancarlo
 
 Hace falta Docker con Compose (en el servidor, Docker Engine; en Windows o Mac, Docker Desktop).
