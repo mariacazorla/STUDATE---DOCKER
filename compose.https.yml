@@ -1,0 +1,17 @@
+# Añadido al docker-compose.yml para servir Studate por HTTPS. No cambia las imágenes: monta en la web
+# un nginx con el server del 443 y el certificado, y abre el puerto 443.
+#
+#     docker compose -f docker-compose.yml -f compose.https.yml up -d
+#
+# Antes hace falta el certificado en certs/ (studate.crt y studate.key; cómo generarlo, en el README) y
+# COOKIE_SECURE=true en el .env: con HTTPS la cookie del refresh token tiene que ir marcada como Secure.
+
+services:
+  web:
+    ports:
+      - "${WEB_PORT:-80}:80"
+      - "${WEB_PORT_HTTPS:-443}:443"
+    volumes:
+      # :ro = solo lectura. El contenedor no puede tocar ni el certificado ni la configuración
+      - ./nginx/https.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
