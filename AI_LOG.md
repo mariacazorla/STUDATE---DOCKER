@@ -32,3 +32,15 @@ Herramienta: Claude Code (Anthropic). Modelo en el Sprint 2: Claude Fable.
   - Las reglas de nginx de la web se separan en un fichero (`studate-app.conf`, dentro de la imagen) que incluyen dos servers: el de http (en la imagen) y el de https (`nginx/https.conf`, en este repo). `compose.https.yml` monta ese server y la carpeta `certs/` (fuera de git) y abre el 443; el 80 redirige a https. Así la imagen es la misma con y sin HTTPS y se decide en el despliegue.
   - README con el guion del servidor paso a paso (Docker, puertos, clonar, `.env`, imágenes, arrancar, comprobar desde dentro y desde fuera, MongoDB cerrado) y los dos casos de certificado (autofirmado con IP o Let's Encrypt con dominio).
   - Probado en local con un certificado autofirmado: http redirige con 301, la web y `/api/ping` responden por https con TLS 1.3 y HTTP/2, el login deja la cookie con `Secure` y esa cookie renueva la sesión.
+
+### 3. Flujo de arquitectura y el despliegue detrás del proxy de la UPC (`feat/documentacion`)
+
+- **Pregunta:** cómo explicar en un minuto la arquitectura de Studate (web, móvil, nginx, API, socket.io y MongoDB) y el camino de una petición con JWT, y qué cambia al desplegar detrás del proxy de la UPC.
+- **Prompt:** «Según la planificación establecida previamente, vamos a proceder de esta forma. Ya toca el segundo despliegue y el cierre (bloque 9 del plan, de la 49 a la 54). Subimos la última versión al servidor y la probamos de punta a punta, en la web y en el móvil. [...] Y dejar todo al día: LOGS y README, el diagrama de clases, el flujo de arquitectura, y el GitHub Project y las horas. Dime el plan de acción.»
+- **Incoherencias:**
+  - El guion de HTTPS de este repo suponía que nuestro nginx termina el TLS con un certificado propio; en el servidor de la asignatura lo termina el proxy de la UPC, así que allí no hacen falta ni `compose.https.yml` ni certificados, pero sí `COOKIE_SECURE=true` y `CORS_ORIGINS` con la dirección https del proxy.
+  - El profesor reparte tres dominios (frontend, backend y backoffice) pensando en tres servicios como en el Seminario 10; Studate es una sola web (estudiante y `/admin`) con la API en `/api`: todos los dominios pueden ir al mismo puerto.
+  - Falta saber a qué puerto de la máquina reenvía el proxy cada dominio: hasta entonces no se puede desplegar.
+- **Solución:**
+  - Sección "Arquitectura" del README con un diagrama Mermaid (GitHub lo pinta) y el camino de una petición en cinco pasos: login, cada petición con `VerifyToken`, `RequireRole` y Joi, la renovación con el refresh token, el chat por socket.io con el token en el handshake y las tareas del servidor.
+  - Sección "Detrás del proxy de la UPC" con las tres variables que cambian y por qué.

@@ -24,6 +24,76 @@ Desde fuera solo se ve nginx. La API y MongoDB solo existen dentro de la red de 
 se llaman por su nombre de servicio. Al salir todo por el mismo origen no hay CORS, y la URL de la API
 que lleva la web compilada es simplemente `/api`: la misma imagen sirve para cualquier servidor.
 
+## Arquitectura
+
+Studate son dos frontends (la web en React, con la app del estudiante y el backoffice, y la app del
+móvil en Expo) que hablan con una sola API (Express) por HTTP y por socket.io, y la API con MongoDB.
+Lo que no se pinta (modelos, cliente HTTP con JWT, servicios y el socket) está una sola vez en
+`packages/shared` del frontend y lo usan la web y el móvil.
+
+```mermaid
+flowchart LR
+  subgraph clientes [Clientes]
+    web["Web (React + Vite)<br>estudiante y backoffice"]
+    movil["Móvil (Expo / React Native)<br>estudiante"]
+  end
+
+  subgraph servidor [Servidor: docker compose]
+    nginx["nginx (web)<br>:80<br>sirve la web compilada"]
+    api["API (Express + socket.io)<br>api:1337"]
+    mongo[("MongoDB<br>mongodb:27017")]
+    seed["seed<br>datos de ejemplo"]
+  end
+
+  web -- "/ (la web)" --> nginx
+  web -- "/api/* y /socket.io" --> nginx
+  movil -- "https://.../api/* y /socket.io" --> nginx
+  nginx -- "/api/* (quita /api)" --> api
+  nginx -- "/socket.io (WebSocket)" --> api
+  api -- "mongoose" --> mongo
+  seed -. "una vez, si está vacía" .-> mongo
+```
+
+El camino de una petición, con JWT:
+
+1. **Entrar.** `POST /api/auth/login` con el correo y la contraseña. La API comprueba la contraseña (scrypt)
+   y responde con un **access token** (JWT firmado con `JWT_SECRET`, dura 15 minutos; lleva el id y el rol)
+   y un **refresh token** (JWT con otro secreto, dura 7 días). En la web el refresh token va en una cookie
+   `HttpOnly` con `Path=/api/auth`, así que JavaScript no lo ve; la app del móvil manda `X-Client: movil`
+   y lo recibe en el JSON, y lo guarda en el almacén cifrado del teléfono.
+2. **Cada petición** lleva `Authorization: Bearer <access token>`. nginx reenvía `/api/*` a la API quitando
+   el prefijo; el middleware `VerifyToken` comprueba la firma y la caducidad, y que el usuario siga activo
+   en MongoDB; `RequireRole` comprueba el rol (403 si no toca); Joi valida el body (422); y el controlador
+   llama al servicio, que lee o escribe en MongoDB con Mongoose.
+3. **Cuando el access token caduca**, la API responde 401 y el cliente compartido pide uno nuevo con
+   `POST /api/auth/refresh` (la cookie o el body) y repite la petición una sola vez. Si tampoco vale, se
+   cierra la sesión.
+4. **El chat** no pasa por HTTP: el cliente abre socket.io contra el origen (nginx reenvía `/socket.io` a
+   la API con las cabeceras de WebSocket) mandando el access token en el handshake; `VerifySocketToken` lo
+   comprueba igual que `VerifyToken`, y sin token válido no hay conexión. Cada Date es una sala en la que
+   solo entran sus dos usuarios; un mensaje se guarda en MongoDB y se emite a la sala, y los cambios de un
+   Date (primer mensaje, caducidad, prórroga, bloqueo) llegan como `date:updated`. Los admin entran además
+   en la sala `admins` y reciben las alertas del botón de ayuda al momento.
+5. **Las tareas del servidor**: la API cierra cada minuto los Dates pendientes caducados y avisa a su sala.
+
+## Detrás del proxy de la UPC
+
+En el servidor de la asignatura el HTTPS **no lo hace nuestro nginx**: lo termina el proxy inverso de la
+UPC (`proxyeetac.upc.edu`), que recibe `https://ea3.upc.edu` y reenvía por http a un puerto de nuestra
+máquina. Por eso ahí se despliega **por http** (`docker compose up -d`, sin `compose.https.yml` ni
+certificados) y con estas tres cosas en el `.env`:
+
+| Variable | Valor | Por qué |
+|---|---|---|
+| `WEB_PORT` | el puerto de la máquina al que reenvía el proxy | es lo único que ve el proxy |
+| `CORS_ORIGINS` | `https://ea3.upc.edu` | la dirección pública es la del proxy, con https |
+| `COOKIE_SECURE` | `true` | el navegador habla con el proxy por https: la cookie del refresh token puede (y debe) ir `Secure` |
+
+La app del móvil apunta a `https://ea3.upc.edu/api`. Una vez dentro, el resto del guion es el de
+"Despliegue en el servidor, paso a paso". Si el proxy reenviara varios dominios (`ea3-api.upc.edu`,
+`ea3-back.upc.edu`) al mismo puerto, todos sirven la misma web: la API responde en `/api` y el backoffice
+en `/admin` en cualquiera de ellos.
+
 ## Cómo arrancarlo
 
 Hace falta Docker con Compose (en el servidor, Docker Engine; en Windows o Mac, Docker Desktop).
