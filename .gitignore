@@ -1,0 +1,19 @@
+# La configuración real, con los secretos. Solo se sube la plantilla .env.example
+.env
+.env.*
+!.env.example
+
+# Certificados y claves: nunca en el repositorio
+certs/
+*.pem
+*.key
+*.crt
+
+# Sistema y editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.obsidian
+*.canvas
+*.py
