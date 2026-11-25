@@ -69,7 +69,7 @@ docker compose -f docker-compose.yml -f compose.build.yml up -d --build
 | Variable | Qué es | Por defecto |
 |---|---|---|
 | `MONGO_DB` | Nombre de la base de datos | `studate` |
-| `WEB_PORT` | Puerto del servidor en el que escucha nginx | `80` |
+| `WEB_PORT`, `WEB_PORT_HTTPS` | Puertos del servidor en los que escucha nginx (el segundo, solo con `compose.https.yml`) | `80`, `443` |
 | `CORS_ORIGINS` | Dirección pública de Studate (varias, separadas por comas). **Obligatoria** | |
 | `COOKIE_SECURE` | `true` solo con HTTPS. Con http tiene que ser `false` o nadie podrá mantener la sesión | `false` |
 | `JWT_SECRET`, `JWT_REFRESH_SECRET` | Secretos de los tokens, distintos entre sí. **Obligatorios** | |
@@ -94,6 +94,56 @@ se toca: está en el volumen `mongo-data`.
 
 ## HTTPS
 
-Pendiente del primer despliegue. El plan es terminar el HTTPS en el mismo nginx de la web, con el
-certificado montado desde fuera de la imagen (carpeta `certs/`, que no se sube al repositorio) y
-`COOKIE_SECURE=true`. Qué certificado depende de si el servidor tiene un nombre de dominio o solo IP.
+El HTTPS lo termina el mismo nginx de la web, sin cambiar la imagen: `compose.https.yml` monta encima
+un server en el 443 con el certificado (`nginx/https.conf`) y deja el 80 solo para redirigir a https.
+Las reglas de la web (rutas de la SPA, `/api`, `/socket.io`) son las mismas, porque van en un fichero
+aparte dentro de la imagen (`studate-app.conf`) que incluyen los dos servers.
+
+1. El certificado y su clave van en `certs/studate.crt` y `certs/studate.key`. La carpeta no se sube a
+   git. Hay dos casos:
+   - **Solo IP (sin dominio):** un certificado autofirmado. El navegador avisa la primera vez y hay que
+     aceptarlo; la app del móvil con Expo Go no lo acepta.
+     ```
+     openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+       -keyout certs/studate.key -out certs/studate.crt \
+       -subj "/CN=studate" -addext "subjectAltName=IP:<ip del servidor>"
+     ```
+   - **Con dominio:** un certificado de Let's Encrypt (`certbot certonly --standalone -d <dominio>`, con el
+     80 libre un momento) y se copian `fullchain.pem` y `privkey.pem` a `certs/` con esos dos nombres.
+2. En el `.env`: `COOKIE_SECURE=true` y `CORS_ORIGINS=https://<dirección>`.
+3. Levantar con los dos ficheros:
+   ```
+   docker compose -f docker-compose.yml -f compose.https.yml up -d
+   ```
+
+Comprobación: `curl -k https://<dirección>/api/ping` responde, `curl -I http://<dirección>/` da 301 a https,
+y la cookie del login lleva `Secure`.
+
+## Despliegue en el servidor, paso a paso
+
+Lo que hay que hacer el día que se entre en el servidor por primera vez. Hace falta un usuario con
+`sudo` y acceso por SSH (con clave: `ssh-copy-id usuario@<ip>` desde el ordenador, una sola vez).
+
+1. **Docker.** Si no está: `curl -fsSL https://get.docker.com | sudo sh`, y `sudo usermod -aG docker $USER`
+   (hay que salir y volver a entrar). Comprobar: `docker compose version`.
+2. **Puertos.** `sudo ss -ltnp | grep -E ':80|:443'`: tienen que estar libres. Si otro grupo usa el mismo
+   servidor, se cambian `WEB_PORT` y `WEB_PORT_HTTPS` en el `.env`.
+3. **Este repo.** `git clone https://github.com/mariacazorla/STUDATE---DOCKER.git && cd STUDATE---DOCKER`.
+4. **Configuración.** `cp .env.example .env` y editar: los dos secretos (generados con el comando del
+   fichero), `CORS_ORIGINS` con la dirección pública y `COOKIE_SECURE` (`false` por http, `true` por https).
+5. **Imágenes.** Los paquetes de ghcr.io tienen que ser públicos (o `docker login ghcr.io` antes).
+   `docker compose pull` baja la API y la web; MongoDB se baja sola.
+6. **Arrancar.** Por http: `docker compose up -d`. Por https: el apartado anterior.
+7. **Comprobar desde el propio servidor:** `docker compose ps` (api, web y mongodb en `Up`, seed en
+   `Exited (0)`), `docker compose logs seed` (los datos creados) y `curl http://localhost/api/ping`.
+8. **Comprobar desde fuera** (desde un ordenador con la VPN, si hace falta): abrir la dirección en el
+   navegador, entrar con `laia@example.com` / `studate26`, recargar en `/dates` (no da 404 y la sesión
+   sigue) y entrar como `admin@example.com` en el backoffice. Con curl:
+   ```
+   curl -c c.txt -X POST http://<dirección>/api/auth/login -H "Content-Type: application/json" -d '{"email":"laia@example.com","password":"studate26"}'
+   curl -b c.txt -X POST http://<dirección>/api/auth/refresh
+   ```
+9. **Comprobar que MongoDB no está expuesto:** desde fuera, `nc -zv <ip> 27017` tiene que fallar.
+
+Para actualizar después: `docker compose pull && docker compose up -d` (apartado anterior). Si algo
+falla: `docker compose logs -f api` suele decir qué (casi siempre, una variable del `.env`).
