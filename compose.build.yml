@@ -1,0 +1,27 @@
+# Añadido al docker-compose.yml para construir las imágenes a partir del código, en lugar de bajarlas de
+# ghcr.io. Supone los tres repositorios clonados uno al lado del otro:
+#
+#     Studate/
+#       STUDUDATE---BACKEND/
+#       STUDATE---FRONTEND/
+#       STUDATE---DOCKER/      <- aquí
+#
+#     docker compose -f docker-compose.yml -f compose.build.yml up -d --build
+#
+# Sirve para probar todo en local antes de subirlo y para desplegar en un servidor que no pueda bajar las
+# imágenes de ghcr.io.
+
+services:
+  api:
+    build:
+      context: ../STUDUDATE---BACKEND
+
+  seed:
+    build:
+      context: ../STUDUDATE---BACKEND
+
+  web:
+    build:
+      # La web se construye desde la raíz del monorepo, porque usa packages/shared
+      context: ../STUDATE---FRONTEND
+      dockerfile: apps/web/Dockerfile
