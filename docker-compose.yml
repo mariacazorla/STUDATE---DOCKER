@@ -1,0 +1,97 @@
+# Studate en producción: tres contenedores y un trabajo de una sola vez.
+#
+#   mongodb   la base de datos, en un volumen y SIN puerto público: solo se ve desde la red interna
+#   api       la API de Express (imagen del repo STUDUDATE---BACKEND)
+#   web       nginx con la web compilada (imagen del repo STUDATE---FRONTEND). Es el único que se abre
+#             a internet: sirve la web y reenvía /api y /socket.io a la API
+#   seed      llena la base de datos con los datos de ejemplo si está vacía, y termina
+#
+# Las imágenes las publica GitHub Actions en ghcr.io en cada push de su repo (:latest desde main y
+# :develop desde develop; IMAGE_TAG en el .env elige cuál). Para construirlas aquí a partir del código
+# (en local, o si ghcr no está disponible), añadir compose.build.yml:
+#
+#     docker compose -f docker-compose.yml -f compose.build.yml up -d --build
+#
+# La configuración (secretos de los JWT, origen público...) se lee del fichero .env, copiado de .env.example.
+
+name: studate
+
+services:
+  mongodb:
+    image: mongo:8
+    container_name: studate-mongodb
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - studate-net
+    # La API y el seed esperan a que MongoDB responda, no solo a que el contenedor haya arrancado
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    image: ghcr.io/mariacazorla/stududate---backend:${IMAGE_TAG:-latest}
+    container_name: studate-api
+    restart: unless-stopped
+    # Sin "ports": a la API solo se llega a través de nginx (/api), nunca directamente
+    environment:
+      NODE_ENV: production
+      SERVER_PORT: 1337
+      MONGO_URL: "mongodb://mongodb:27017/${MONGO_DB:-studate}"
+      # Orígenes desde los que un navegador puede llamar a la API. La web sale por el mismo nginx, así
+      # que es el mismo origen; se pone igualmente por si alguien abre la API desde otro sitio
+      CORS_ORIGINS: "${CORS_ORIGINS:?falta CORS_ORIGINS en el .env}"
+      # La API va detrás de /api: la cookie del refresh token tiene que llevar esa ruta
+      REFRESH_COOKIE_PATH: /api/auth
+      # Secure solo con HTTPS. Sin HTTPS la cookie no llegaría nunca y nadie podría entrar
+      COOKIE_SECURE: "${COOKIE_SECURE:-false}"
+      # Sin los dos secretos el compose no arranca: a propósito, para no dejar una API con un secreto de mentira
+      JWT_SECRET: "${JWT_SECRET:?falta JWT_SECRET en el .env}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:?falta JWT_REFRESH_SECRET en el .env}"
+      JWT_EXPIRES_IN: "${JWT_EXPIRES_IN:-15m}"
+      JWT_REFRESH_EXPIRES_IN: "${JWT_REFRESH_EXPIRES_IN:-7d}"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - studate-net
+
+  # Los datos de ejemplo. Usa la misma imagen que la API y ejecuta el seed compilado: solo inserta si la
+  # base de datos está vacía, así que se puede dejar que corra en cada "up" sin peligro. restart: "no"
+  # porque es un trabajo que termina, no un servicio
+  seed:
+    image: ghcr.io/mariacazorla/stududate---backend:${IMAGE_TAG:-latest}
+    container_name: studate-seed
+    restart: "no"
+    command: ["node", "build/seed.js"]
+    environment:
+      MONGO_URL: "mongodb://mongodb:27017/${MONGO_DB:-studate}"
+      JWT_SECRET: "${JWT_SECRET:?falta JWT_SECRET en el .env}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:?falta JWT_REFRESH_SECRET en el .env}"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - studate-net
+
+  web:
+    image: ghcr.io/mariacazorla/studate---frontend:${IMAGE_TAG:-latest}
+    container_name: studate-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      - api
+    networks:
+      - studate-net
+
+networks:
+  studate-net:
+    driver: bridge
+
+volumes:
+  # Sobrevive a "docker compose down". Solo se borra con "docker compose down -v"
+  mongo-data:
